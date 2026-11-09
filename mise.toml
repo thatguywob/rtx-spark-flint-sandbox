@@ -1,0 +1,90 @@
+[env]
+_.file = { path = ".env", redact = true }
+FEDORA_VER = "45"
+LLAMA_VER = "b12186"
+PORT = { default = "8080" }
+IMAGE_TAG = { default = "flint-llama:fedora45-cuda" }
+MODEL_PATH = { default = "C:/models/flint-nvfp4.gguf" }
+FLINT_API_KEY = { default = "" }
+FLINT_API_URL = "http://127.0.0.1:{{env.PORT}}/v1/chat/completions"
+TAILNET_ENDPOINT = { default = "" }
+[tasks."host:clean"]
+description = "Remove legacy host standalone builds, binaries, and mise caches"
+run = 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/cleanup-host.ps1'
+
+[tasks."model:verify"]
+description = "Verify SHA-256 integrity and byte length of target model weights"
+run = 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-model.ps1 -Path "{{env.MODEL_PATH}}"'
+
+[tasks."sandbox:build"]
+description = "Build the Fedora 45 OCI container from source via wslc (CentOS Stream 10 builder + CUDA 13.5 sbsa)"
+run = 'wslc build -t {{env.IMAGE_TAG}} -f ./Containerfile .'
+
+[tasks."sandbox:serve"]
+description = "Serve Flint-nvfp4 in foreground inside the isolated Fedora OCI MicroVM sandbox"
+run = """
+wslc run --rm -i \
+  --name flint-nvfp4 \
+  --gpus all \
+  --memory 48G \
+  --tmpfs /tmp:rw,noexec,nosuid,size=1G \
+  -v "{{env.MODEL_PATH}}:/models/flint-nvfp4.gguf:ro" \
+  -p 127.0.0.1:{{env.PORT}}:8080 \
+  {{env.IMAGE_TAG}} \
+  -m /models/flint-nvfp4.gguf \
+  --alias flint \
+  --api-key "{{env.FLINT_API_KEY}}" \
+  --device CUDA0 -ngl all --fit off \
+  -c 65536 -np 1 -fa on -ctk f16 -ctv f16 \
+  --jinja --temp 1 --top-p 0.95 --top-k 20 --min-p 0 \
+  --host 0.0.0.0 --port 8080 \
+  --log-verbosity 4
+"""
+[tasks."sandbox:start"]
+description = "Start Flint-nvfp4 in background (detached) inside the isolated Fedora OCI MicroVM sandbox"
+run = """
+wslc run -d --rm \
+  --name flint-nvfp4 \
+  --gpus all \
+  --memory 48G \
+  --tmpfs /tmp:rw,noexec,nosuid,size=1G \
+  -v "{{env.MODEL_PATH}}:/models/flint-nvfp4.gguf:ro" \
+  -p 127.0.0.1:{{env.PORT}}:8080 \
+  {{env.IMAGE_TAG}} \
+  -m /models/flint-nvfp4.gguf \
+  --alias flint \
+  --api-key "{{env.FLINT_API_KEY}}" \
+  --device CUDA0 -ngl all --fit off \
+  -c 65536 -np 1 -fa on -ctk f16 -ctv f16 \
+  --jinja --temp 1 --top-p 0.95 --top-k 20 --min-p 0 \
+  --host 0.0.0.0 --port 8080 \
+  --log-verbosity 4
+"""
+[tasks."sandbox:wait"]
+description = "Poll endpoint readiness until healthcheck passes"
+run = 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/wait-healthy.ps1 -Url "http://127.0.0.1:{{env.PORT}}/health"'
+
+[tasks."sandbox:stop"]
+description = "Stop the sandboxed flint-nvfp4 container"
+run = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop.ps1"
+
+[tasks."sandbox:status"]
+description = "Display container state, resource usage, and health/tailnet reachability"
+run = 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/status.ps1'
+
+[tasks."sandbox:restart"]
+description = "Restart the sandboxed flint-nvfp4 container and wait for readiness"
+run = [
+  { task = "sandbox:stop" },
+  { task = "sandbox:start" },
+  { task = "sandbox:wait" }
+]
+
+[tasks."sandbox:logs"]
+description = "View logs from the sandboxed flint-nvfp4 container"
+run = "wslc logs flint-nvfp4"
+
+[tasks."sandbox:smoke"]
+description = "Run streaming compliance, TTFT, token speed, and reasoning retention test"
+depends = ["sandbox:wait"]
+run = 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-test.ps1'

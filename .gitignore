@@ -1,0 +1,35 @@
+# Local Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+mise.local.toml
+mise.*.local.toml
+*.key
+*.pem
+*.secret
+
+.private-patterns
+# Model Weights (Do NEVER commit GGUF files)
+*.gguf
+*.bin
+*.pt
+*.safetensors
+/models/
+
+# OMP Local Data & Caches
+.omp/
+*.db
+*.db-shm
+*.db-wal
+
+# Build Caches & Temp Files
+build/
+*.log
+/tmp/
+.mise/
+/public-export/
+/private-audit/
+
+# Internal Planning Documents (Excluded from Version Control & Distribution)
+PLAN.md
+repo-plan.md
